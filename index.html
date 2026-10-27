@@ -316,6 +316,31 @@ textarea.inp{height:auto;padding:12px 14px;resize:vertical;min-height:84px}
 .spin{width:22px;height:22px;border:2px solid var(--line);border-top-color:var(--ac);border-radius:50%;animation:rt .7s linear infinite;margin:60px auto}
 @keyframes rt{to{transform:rotate(360deg)}}
 .boot{min-height:100vh;display:grid;place-items:center}
+/* ---------- retorno do e-mail (confirmação / link expirado) ---------- */
+.cf{min-height:100vh;display:grid;place-items:center;padding:32px max(20px,env(safe-area-inset-left,0px));background:radial-gradient(90% 60% at 50% 0%,rgba(234,227,214,.07),transparent 70%),var(--bg)}
+.cf-card{width:100%;max-width:440px;text-align:center}
+.cf-card .wm{--mh:40px;--wh:20px;gap:15px;margin:0 auto 44px}
+.cf-box{border:1px solid var(--line);border-radius:22px;background:var(--card);padding:44px 32px 32px}
+.cf-ic{width:84px;height:84px;margin:0 auto 26px;border-radius:50%;border:1px solid color-mix(in srgb,var(--ac) 45%,transparent);display:grid;place-items:center;background:color-mix(in srgb,var(--ac) 7%,transparent);animation:cfp .7s ease-out both}
+.cf-ic svg{width:40px;height:40px;fill:none;stroke:var(--ac);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.cf-ic svg path{stroke-dasharray:40;stroke-dashoffset:40;animation:cfd .6s .35s ease-out forwards}
+.cf-ic.warn{border-color:rgba(240,191,99,.5);background:rgba(240,191,99,.08)}.cf-ic.warn svg{stroke:#f0bf63}.cf-ic.warn svg path{stroke-dasharray:none;stroke-dashoffset:0;animation:none}
+.cf-box h1{font-size:27px;letter-spacing:-.03em;line-height:1.15;margin-bottom:10px}
+.cf-box p{color:var(--mut);font-size:15.5px;line-height:1.55}
+.cf-em{display:inline-block;margin-top:14px;padding:6px 14px;border:1px solid var(--line);border-radius:20px;font-size:13.5px;color:var(--fg);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-steps{display:flex;justify-content:center;gap:8px;margin:26px 0 8px;font-size:12.5px;color:var(--mut)}
+.cf-steps span{display:inline-flex;align-items:center;gap:7px}
+.cf-steps i{width:7px;height:7px;border-radius:50%;background:var(--line)}
+.cf-steps .on i{background:var(--ac)}.cf-steps .on{color:var(--fg)}
+.cf-bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin:18px 0 12px}
+.cf-bar i{display:block;height:100%;width:100%;background:var(--ac);transform-origin:left;animation:cfb 4s linear forwards}
+.cf-go{font-size:13px;color:var(--mut);margin-bottom:20px}
+.cf-box .btn{width:100%}
+.cf-note{margin-top:22px;font-size:12.5px;color:var(--mut)}
+.cf-box .field{text-align:left;margin:22px 0 14px}
+@keyframes cfp{from{transform:scale(.8);opacity:0}}@keyframes cfd{to{stroke-dashoffset:0}}@keyframes cfb{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+@media(prefers-reduced-motion:reduce){.cf-ic,.cf-ic svg path,.cf-bar i{animation:none}.cf-ic svg path{stroke-dashoffset:0}}
+
 </style>
 </head>
 <body>
@@ -734,7 +759,7 @@ const P = {b: null, tab: 'agenda', pend: 0, ag: {view: 'dia', data: hoje(), filt
 let pollT;
 
 async function loadPainel(tab) {
-  $('#app').innerHTML = '<div class="boot"><div class="spin"></div></div>';
+  $('#app').innerHTML = '<div class="boot"><div class="spin"></div></div>'; pendPrev = null;
   try {
     P.b = await rpc('mq_minha_barbearia', {}, true);
   } catch (e) { if (e.login) return viewAuth('login', e.message); $('#app').innerHTML = `<div class="auth center"><h2>Ops</h2><p class="sub">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Tentar de novo</button> <button class="btn" data-act="logout">Sair</button></div>`; return; }
@@ -743,9 +768,32 @@ async function loadPainel(tab) {
   document.title = `${P.b.nome} — Painel Marqui`;
   document.body.style.background = ''; $('meta[name=theme-color]').content = '#0b0b0c';
   paintShell(); await refreshPend(); goTab(P.tab);
-  clearInterval(pollT); pollT = setInterval(refreshPend, 60000);
+  clearInterval(pollT); pollT = setInterval(refreshPend, 30000);
 }
-async function refreshPend() { try { const c = await rpc('mq_contadores', {}, true); P.pend = c.pendentes; const b = $('#tab-ag .bg'); if (b) { b.textContent = P.pend; b.hidden = !P.pend; } else paintBadge(); } catch {} }
+let pendPrev = null, AC = null;
+async function refreshPend() {
+  try {
+    const c = await rpc('mq_contadores', {}, true), novo = c.pendentes; P.pend = novo;
+    const b = $('#tab-ag .bg'); if (b) { b.textContent = P.pend; b.hidden = !P.pend; } else paintBadge();
+    if (P.b) document.title = (P.pend ? `(${P.pend}) ` : '') + `${P.b.nome} — Painel Marqui`;
+    if (pendPrev !== null && novo > pendPrev) avisar(novo - pendPrev);
+    pendPrev = novo;
+  } catch {}
+}
+document.addEventListener('pointerdown', () => { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } if (AC && AC.state === 'suspended') AC.resume(); }, {passive: true});
+function beep() {
+  if (!AC) return;
+  try { const t = AC.currentTime; [[880, 0], [1320, .17]].forEach(([f, d]) => { const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(.18, t + d + .02); g.gain.exponentialRampToValueAtTime(.001, t + d + .32); o.connect(g); g.connect(AC.destination); o.start(t + d); o.stop(t + d + .34); }); } catch {}
+}
+function avisar(n) {
+  const msg = n === 1 ? 'Novo pedido de agendamento' : `${n} novos pedidos de agendamento`;
+  toast(msg);
+  if (ls.get('mq_som', true)) beep();
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) { try { new Notification(P.b.nome, {body: msg, tag: 'mq-novo'}); } catch {} }
+  if (P.tab === 'agenda') quietAg();
+}
+async function quietAg() { try { const [a, b] = agRange(); P.ag.itens = await rpc('mq_agenda', {p_de: a, p_ate: b}, true); if (P.tab === 'agenda' && !$('#modal').firstChild) paintAgenda(); } catch {} }
+const notifStatus = () => !('Notification' in window) ? 'Este navegador não suporta' : Notification.permission === 'granted' ? 'Ativada' : Notification.permission === 'denied' ? 'Bloqueada. Libere nas configurações do navegador' : 'Desativada';
 function paintBadge() { const t = $('#tab-ag'); if (t && P.pend && !t.querySelector('.bg')) t.insertAdjacentHTML('beforeend', `<span class="bg">${P.pend}</span>`); }
 const TABS = [['agenda', 'Agenda'], ['resumo', 'Resumo'], ['equipe', 'Equipe'], ['servicos', 'Serviços'], ['aparencia', 'Aparência'], ['ajustes', 'Ajustes']];
 function paintShell() {
@@ -973,6 +1021,10 @@ function viewAjustes() {
     <div class="field"><label>Motivo (opcional)</label><input id="b-m" class="inp" maxlength="60" placeholder="Ex.: Feriado"></div>
     <button class="btn" data-act="bl-add">Bloquear</button><p class="hint" style="margin-top:8px">Sem horário = dia inteiro.</p>
     <div class="ls" style="margin-top:14px">${b.bloqueios.length ? b.bloqueios.map(k => `<div><span class="grow">${fmtDia(k.dia, {weekday: 'short', day: '2-digit', month: 'short'})}${k.hora_ini ? ` · ${k.hora_ini}–${k.hora_fim}` : ' · dia todo'}<small>${k.profissional_id ? esc((b.profissionais.find(p => p.id === k.profissional_id) || {}).nome || '') : 'Toda a barbearia'}${k.motivo ? ' · ' + esc(k.motivo) : ''}</small></span><button class="btn sm bad" data-act="bl-del" data-id="${k.id}">Remover</button></div>`).join('') : '<div class="hint">Nenhum bloqueio futuro.</div>'}</div></div>
+  <div class="box"><h3>Avisos de novos pedidos</h3><div class="ls">
+    <div><span class="grow">Som de alerta<small>Toca quando chega um pedido novo</small></span><button class="tg ${ls.get('mq_som', true) ? 'on' : ''}" data-act="som" role="switch" aria-checked="${ls.get('mq_som', true)}" aria-label="Som de alerta"></button></div>
+    <div><span class="grow">Notificação do navegador<small>${notifStatus()}</small></span>${'Notification' in window && Notification.permission === 'default' ? '<button class="btn sm" data-act="notif">Ativar</button>' : ''}</div></div>
+    <p class="note">Os avisos funcionam enquanto o painel estiver aberto no navegador, mesmo em segundo plano. A busca por pedidos novos acontece a cada 30 segundos.</p></div>
   <div class="box"><h3>Conta</h3><p class="hint" style="margin-bottom:12px">${esc((SESS && SESS.email) || '')}</p><button class="btn" data-act="logout">Sair</button></div>`);
   const w = $('#j-w'); w.oninput = () => w.value = maskTel(w.value);
   const s = $('#j-s'), h = $('#j-sh'); let tc;
@@ -1051,6 +1103,8 @@ const ACT = {
     if (P.novo && !P.b.publicada) { P.novo = false; toast('Salvo! Agora publique em Ajustes.'); }
     viewAparencia();
   }),
+  som: () => { ls.set('mq_som', !ls.get('mq_som', true)); if (ls.get('mq_som', true)) beep(); viewAjustes(); },
+  notif: () => { Notification.requestPermission().then(() => viewAjustes()); },
   pub: () => run(async () => { const v = !P.b.publicada; await rpc('mq_publicar', {p_publicar: v}, true); P.b.publicada = v; $('#pubst').className = 'pub' + (v ? ' on' : ''); $('#pubst span').textContent = v ? 'Página no ar' : 'Rascunho'; toast(v ? 'Página publicada!' : 'Página despublicada.'); viewAjustes(); }),
   cp: () => { const i = $('#lk-u'); i.select(); (navigator.clipboard ? navigator.clipboard.writeText(i.value) : Promise.reject()).then(() => toast('Link copiado.'), () => { document.execCommand && document.execCommand('copy'); toast('Link copiado.'); }); },
   'aj-save': () => run(async () => {
@@ -1073,19 +1127,68 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (BK.open) { BK.open = false; bkRender(); } else if ($('#modal').firstChild) closeModal(); } });
 
+
+/* ---------- páginas de retorno do e-mail ---------- */
+let cfT = null;
+function viewConfirmado(email) {
+  const TOTAL = 4; let ir = false;
+  const seguir = () => { if (ir) return; ir = true; clearTimeout(cfT); loadPainel(); };
+  $('#app').innerHTML = `<main class="cf"><div class="cf-card"><span class="wm"><span class="sr">Marqui</span></span>
+    <section class="cf-box" aria-live="polite">
+      <div class="cf-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <h1>E-mail confirmado</h1>
+      <p>Sua conta no Marqui está ativa. Agora vamos montar a página de agendamento da sua barbearia.</p>
+      ${email ? `<span class="cf-em">${esc(email)}</span>` : ''}
+      <div class="cf-steps"><span><i class="on" style="background:var(--ac)"></i>Conta criada</span><span class="on"><i></i>Sua barbearia</span><span><i></i>Publicar</span></div>
+      <div class="cf-bar" aria-hidden="true"><i></i></div>
+      <div class="cf-go" id="cf-go">Redirecionando em ${TOTAL}s…</div>
+      <button class="btn pri" id="cf-b">Continuar agora</button>
+    </section>
+    <p class="cf-note">Por segurança, este link funciona uma única vez.</p></div></main>`;
+  $('#cf-b').onclick = seguir;
+  let n = TOTAL; const tick = () => { n--; const g = $('#cf-go'); if (n <= 0) return seguir(); if (g) g.textContent = `Redirecionando em ${n}s…`; cfT = setTimeout(tick, 1000); };
+  cfT = setTimeout(tick, 1000);
+}
+function viewLinkExpirado(email) {
+  $('#app').innerHTML = `<main class="cf"><div class="cf-card"><span class="wm"><span class="sr">Marqui</span></span>
+    <form class="cf-box" id="cf-f" novalidate>
+      <div class="cf-ic warn" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 7v6M12 17v.01"/></svg></div>
+      <h1>Este link não é mais válido</h1>
+      <p>Links de confirmação expiram por segurança ou podem já ter sido usados. Se você já confirmou, é só entrar. Se não, envie um novo link.</p>
+      <div class="field"><label for="cf-e">Seu e-mail</label><input id="cf-e" class="inp" type="email" autocomplete="email" value="${esc(email || '')}" placeholder="voce@exemplo.com"></div>
+      <div class="err" id="cf-err" hidden></div>
+      <button class="btn pri" id="cf-s" style="margin-bottom:10px">Enviar novo link</button>
+      <button type="button" class="btn" data-act="go-login">Já confirmei, entrar</button>
+    </form></div></main>`;
+  $('#cf-f').onsubmit = async ev => {
+    ev.preventDefault(); const er = $('#cf-err'), b = $('#cf-s'), em = $('#cf-e').value.trim().toLowerCase(); er.hidden = true;
+    if (!/^\S+@\S+\.\S+$/.test(em)) { er.textContent = 'Informe um e-mail válido.'; er.hidden = false; return; }
+    b.disabled = true; b.textContent = 'Enviando…';
+    try { await authCall('/resend?redirect_to=' + encodeURIComponent(location.origin + location.pathname), {type: 'signup', email: em}); viewAuth('login', 'Enviamos um novo link para ' + em + '. Abra o e-mail mais recente e clique em confirmar.'); }
+    catch (e) { er.textContent = e.message; er.hidden = false; b.disabled = false; b.textContent = 'Enviar novo link'; }
+  };
+}
+
 /* =========================================================
    INÍCIO
    ========================================================= */
 async function boot() {
   if (!CONFIG_OK) { $('#app').innerHTML = '<div class="auth"><span class="wm"><span class="sr">Marqui</span></span><h2>Falta conectar o Supabase</h2><p class="sub">Abra o arquivo index.html em um editor de texto e preencha <b>SB_URL</b> e <b>SB_KEY</b> no começo do script, com os dados do seu projeto (Project Settings → API).</p></div>'; return; }
   const q = new URLSearchParams(location.search); SLUG = (q.get('b') || '').toLowerCase().trim();
-  // retorno de e-mail (confirmação / recuperação de senha)
-  if (location.hash.includes('access_token=') || location.hash.includes('error_description=')) {
-    const h = new URLSearchParams(location.hash.slice(1)); history.replaceState(null, '', location.pathname + location.search);
-    if (h.get('error_description')) { viewAuth('login', 'O link expirou ou já foi usado. Entre ou peça outro.'); return; }
-    setSess({access_token: h.get('access_token'), refresh_token: h.get('refresh_token'), expires_in: +h.get('expires_in') || 3600});
-    try { const u = await (await fetch(SB_URL + '/auth/v1/user', {headers: {apikey: SB_KEY, Authorization: 'Bearer ' + SESS.access_token}})).json(); SESS.email = u.email || ''; ls.set('mq_sess', SESS); } catch {}
-    if (h.get('type') === 'recovery') return viewAuth('newpass');
+  // retorno de e-mail (confirmação / recuperação de senha). O Supabase pode mandar os dados no # ou no ?
+  const hs = location.hash.slice(1), hp = new URLSearchParams(hs || location.search.slice(1));
+  const veioDoEmail = hp.get('access_token') || hp.get('error') || hp.get('error_code') || hp.get('error_description');
+  if (veioDoEmail && (hs || hp.get('error'))) {
+    history.replaceState(null, '', location.pathname + (SLUG ? '?b=' + encodeURIComponent(SLUG) : ''));
+    if (hp.get('error') || hp.get('error_code') || hp.get('error_description')) return viewLinkExpirado();
+    setSess({access_token: hp.get('access_token'), refresh_token: hp.get('refresh_token'), expires_in: +hp.get('expires_in') || 3600});
+    let em = '';
+    try { em = JSON.parse(atob(hp.get('access_token').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).email || ''; } catch {}
+    try { const u = await (await fetch(SB_URL + '/auth/v1/user', {headers: {apikey: SB_KEY, Authorization: 'Bearer ' + SESS.access_token}})).json(); em = u.email || em; } catch {}
+    SESS.email = em; ls.set('mq_sess', SESS);
+    const tp = hp.get('type');
+    if (tp === 'recovery') return viewAuth('newpass');
+    if (['signup', 'invite', 'magiclink', 'email_change'].includes(tp)) return viewConfirmado(em);
   }
   if (SLUG) return loadShop();
   if (SESS) return loadPainel();
