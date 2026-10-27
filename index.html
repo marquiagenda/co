@@ -338,6 +338,10 @@ textarea.inp{height:auto;padding:12px 14px;resize:vertical;min-height:84px}
 .cf-box .btn{width:100%}
 .cf-note{margin-top:22px;font-size:12.5px;color:var(--mut)}
 .cf-box .field{text-align:left;margin:22px 0 14px}
+
+.cf-ic.mail svg path{stroke-dasharray:none;stroke-dashoffset:0;animation:none}
+.cd{text-align:center;font-size:30px;letter-spacing:.42em;height:64px;font-variant-numeric:tabular-nums;font-weight:600;padding-left:calc(14px + .42em)}
+.cd::placeholder{color:var(--line);letter-spacing:.3em}
 @keyframes cfp{from{transform:scale(.8);opacity:0}}@keyframes cfd{to{stroke-dashoffset:0}}@keyframes cfb{from{transform:scaleX(1)}to{transform:scaleX(0)}}
 @media(prefers-reduced-motion:reduce){.cf-ic,.cf-ic svg path,.cf-bar i{animation:none}.cf-ic svg path{stroke-dashoffset:0}}
 
@@ -442,8 +446,10 @@ async function authCall(path, body, method) {
   const t = await r.text(); let j = null; try { j = t ? JSON.parse(t) : null; } catch {}
   if (!r.ok) {
     const c = (j && (j.error_code || j.code)) || '', m = (j && (j.msg || j.message || j.error_description)) || '';
+    if (path.startsWith('/verify')) throw new Error('Código incorreto ou expirado. Confira os números ou peça um novo código.');
+    if (r.status === 429) throw new Error('Aguarde um instante antes de pedir outro código.');
     if (/invalid_credentials|Invalid login/i.test(c + m)) throw new Error('E-mail ou senha incorretos.');
-    if (/email_not_confirmed/i.test(c + m)) throw new Error('Confirme seu e-mail antes de entrar (veja sua caixa de entrada).');
+    if (/email_not_confirmed/i.test(c + m)) throw Object.assign(new Error('Confirme seu e-mail antes de entrar.'), {naoConfirmado: true});
     if (/user_already_exists|already registered/i.test(c + m)) throw new Error('Este e-mail já tem cadastro. Use "Entrar".');
     if (/weak_password|at least/i.test(c + m)) throw new Error('A senha precisa ter pelo menos 6 caracteres.');
     if (/over_email_send_rate_limit|rate/i.test(c + m)) throw new Error('Muitas tentativas. Aguarde um minuto e tente de novo.');
@@ -741,14 +747,17 @@ function viewAuth(modo, info) {
     try {
       const red = encodeURIComponent(location.origin + location.pathname);
       if (nova) { await authCall('/user', {password: pw}, 'PUT'); toast('Senha alterada.'); boot(); return; }
-      if (rec) { await authCall('/recover?redirect_to=' + red, {email: em}); viewAuth('login', 'Se o e-mail existir, enviamos um link para redefinir a senha.'); return; }
+      if (rec) { await authCall('/recover', {email: em}); viewCodigo(em, 'recovery'); return; }
       if (s) {
-        const j = await authCall('/signup?redirect_to=' + red, {email: em, password: pw});
+        const j = await authCall('/signup', {email: em, password: pw});
         if (j && j.access_token) { setSess(j); boot(); return; }
-        viewAuth('login', 'Conta criada! Confirme seu e-mail pelo link que enviamos e depois entre aqui.'); return;
+        viewCodigo(em, 'signup'); return;
       }
       setSess(await authCall('/token?grant_type=password', {email: em, password: pw})); SESS.email = em; ls.set('mq_sess', SESS); boot();
-    } catch (e) { er.textContent = e.message; er.hidden = false; b.disabled = false; b.textContent = bt; }
+    } catch (e) {
+      if (e.naoConfirmado) { try { await authCall('/resend', {type: 'signup', email: em}); } catch {} return viewCodigo(em, 'signup'); }
+      er.textContent = e.message; er.hidden = false; b.disabled = false; b.textContent = bt;
+    }
   };
 }
 
@@ -1148,6 +1157,36 @@ function viewConfirmado(email) {
   $('#cf-b').onclick = seguir;
   let n = TOTAL; const tick = () => { n--; const g = $('#cf-go'); if (n <= 0) return seguir(); if (g) g.textContent = `Redirecionando em ${n}s…`; cfT = setTimeout(tick, 1000); };
   cfT = setTimeout(tick, 1000);
+}
+
+function viewCodigo(email, tipo) {
+  const rec = tipo === 'recovery'; let cd = 30, tm = null;
+  $('#app').innerHTML = `<main class="cf"><div class="cf-card"><span class="wm"><span class="sr">Marqui</span></span>
+    <form class="cf-box" id="cd-f" novalidate>
+      <div class="cf-ic mail" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z"/><path d="M3 7l9 7 9-7"/></svg></div>
+      <h1>${rec ? 'Digite o código' : 'Confirme seu e-mail'}</h1>
+      <p>Enviamos um código para</p><span class="cf-em">${esc(email)}</span>
+      <div class="field" style="margin-top:26px"><label for="cd-c" class="sr">Código</label><input id="cd-c" class="inp cd" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="000000" aria-label="Código recebido por e-mail"></div>
+      <div class="err" id="cd-err" hidden style="margin:-4px 0 12px"></div>
+      <button class="btn pri" id="cd-b" disabled>${rec ? 'Continuar' : 'Confirmar'}</button>
+      <div class="cf-go" style="margin:18px 0 0" id="cd-r"></div>
+      <p class="hint" style="margin-top:14px">Não chegou? Olhe a caixa de spam. Se você já tem conta, <a class="lnk" data-act="go-login">entre</a> ou <a class="lnk" data-act="go-recover">recupere a senha</a>.</p>
+    </form></div></main>`;
+  const inp = $('#cd-c'), btn = $('#cd-b'), er = $('#cd-err'), rr = $('#cd-r');
+  const paintR = () => { if (!$('#cd-r')) return clearInterval(tm); rr.innerHTML = cd > 0 ? `Reenviar código em ${cd}s` : '<a class="lnk" id="cd-re" style="cursor:pointer">Reenviar código</a>'; const re = $('#cd-re'); if (re) re.onclick = reenviar; };
+  async function reenviar() { try { await authCall(rec ? '/recover' : '/resend', rec ? {email} : {type: 'signup', email}); toast('Novo código enviado.'); cd = 30; paintR(); } catch (e) { er.textContent = e.message; er.hidden = false; } }
+  tm = setInterval(() => { if (cd > 0) cd--; paintR(); }, 1000); paintR();
+  inp.focus();
+  inp.oninput = () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 10); btn.disabled = inp.value.length < 6; er.hidden = true; };
+  $('#cd-f').onsubmit = async ev => {
+    ev.preventDefault(); if (inp.value.length < 6) return; er.hidden = true; btn.disabled = true; const t0 = btn.textContent; btn.textContent = 'Verificando…';
+    try {
+      const j = await authCall('/verify', {type: tipo, email, token: inp.value});
+      clearInterval(tm); setSess(j); SESS.email = email; ls.set('mq_sess', SESS);
+      if (rec) return viewAuth('newpass');
+      viewConfirmado(email);
+    } catch (e) { er.textContent = e.message; er.hidden = false; btn.disabled = false; btn.textContent = t0; inp.select(); }
+  };
 }
 function viewLinkExpirado(email) {
   $('#app').innerHTML = `<main class="cf"><div class="cf-card"><span class="wm"><span class="sr">Marqui</span></span>
